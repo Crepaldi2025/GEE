@@ -1,5 +1,7 @@
-# app.py — GEE + Streamlit (Service Account) + Mapa SRTM
+# app.py — GEE + Streamlit (Service Account robusto) + Mapa SRTM
+# Requer: streamlit, earthengine-api, geemap, folium
 
+import json
 import streamlit as st
 import ee
 
@@ -7,21 +9,59 @@ st.set_page_config(page_title="GEE + Streamlit — SRTM", layout="wide")
 st.title("GEE + Streamlit — SRTM")
 st.caption(f"Projeto: {st.secrets.get('EARTHENGINE_PROJECT', 'gee-crepaldi-2025')}")
 
-# ----------------- AUTENTICAÇÃO (Service Account via secrets) -----------------
+# ----------------------------------------------------------
+#  AUTENTICAÇÃO ROBUSTA COM SERVICE ACCOUNT
+#  Aceita EE_PRIVATE_KEY como:
+#   - string JSON (TOML """...""" ou '''...''')
+#   - objeto já parseado (alguns Streamlit parseiam secrets como dict)
+#  Normaliza o campo "private_key" para conter quebras de linha reais.
+# ----------------------------------------------------------
 def init_ee() -> bool:
     try:
-        credentials = ee.ServiceAccountCredentials(
-            st.secrets["EE_SERVICE_ACCOUNT"],       # e-mail da SA
-            key_data=st.secrets["EE_PRIVATE_KEY"]   # JSON completo como STRING
-        )
-        ee.Initialize(credentials, project=st.secrets["EARTHENGINE_PROJECT"])
+        service_account = st.secrets["EE_SERVICE_ACCOUNT"]
+        project_id = st.secrets["EARTHENGINE_PROJECT"]
+        key_blob = st.secrets["EE_PRIVATE_KEY"]
+
+        # 1) Garantir que temos um dict com o JSON
+        if isinstance(key_blob, str):
+            # Remove BOM/acidental spaces
+            key_blob = key_blob.strip()
+            # Se vier string JSON, parseia
+            if key_blob.startswith("{") and key_blob.endswith("}"):
+                info = json.loads(key_blob)
+            else:
+                # Caso extremo: user colou só o PEM (não é o nosso caso)
+                raise ValueError("EE_PRIVATE_KEY não parece um JSON da conta de serviço.")
+        elif isinstance(key_blob, (dict,)):
+            info = dict(key_blob)  # cópia
+        else:
+            raise ValueError("EE_PRIVATE_KEY precisa ser string JSON ou dict.")
+
+        # 2) Normalizar o campo private_key
+        pk = info.get("private_key", "")
+        if not pk:
+            raise ValueError("Campo 'private_key' ausente no JSON.")
+
+        # Se veio com '\n' literais, converte para quebras reais
+        # (ex.: '-----BEGIN...\\n...\\n-----END-----\\n' -> com quebras)
+        if "\\n" in pk and "\n" not in pk:
+            pk = pk.replace("\\n", "\n")
+        # Garante que começa e termina com os marcadores PEM
+        if "BEGIN PRIVATE KEY" not in pk:
+            raise ValueError("Conteúdo de 'private_key' não parece um PEM válido.")
+
+        info["private_key"] = pk  # salva de volta
+
+        # 3) Inicializar o EE com o JSON normalizado
+        credentials = ee.ServiceAccountCredentials(service_account, key_data=json.dumps(info))
+        ee.Initialize(credentials, project=project_id)
         st.success("Earth Engine inicializado via Service Account.")
         return True
+
     except Exception as e:
         st.error(
             "Falha ao inicializar o Earth Engine com Service Account.\n"
-            "Confira os *Secrets* (EE_SERVICE_ACCOUNT, EE_PRIVATE_KEY, EARTHENGINE_PROJECT) "
-            "e os papéis IAM (Service Usage Consumer e, para dev, Editor)."
+            "Revise os *Secrets* e papéis IAM (Service Usage Consumer e, p/ dev, Editor)."
         )
         st.exception(e)
         return False
