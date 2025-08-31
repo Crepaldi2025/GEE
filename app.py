@@ -1,7 +1,5 @@
 # app.py — GEE + Streamlit (Service Account) + Mapa SRTM
-# Requer: streamlit, earthengine-api, geemap, folium
 
-import json
 import streamlit as st
 import ee
 
@@ -10,26 +8,25 @@ st.title("GEE + Streamlit — SRTM")
 st.caption(f"Projeto: {st.secrets.get('EARTHENGINE_PROJECT', 'gee-crepaldi-2025')}")
 
 # ----------------- AUTENTICAÇÃO (Service Account via secrets) -----------------
-def init_ee() -> None:
-    service_account = st.secrets["EE_SERVICE_ACCOUNT"]
-    private_key_json = st.secrets["EE_PRIVATE_KEY"]   # JSON inteiro entre """..."""
-    project_id = st.secrets.get("EARTHENGINE_PROJECT", "gee-crepaldi-2025")
+def init_ee() -> bool:
+    try:
+        credentials = ee.ServiceAccountCredentials(
+            st.secrets["EE_SERVICE_ACCOUNT"],       # e-mail da SA
+            key_data=st.secrets["EE_PRIVATE_KEY"]   # JSON completo como STRING
+        )
+        ee.Initialize(credentials, project=st.secrets["EARTHENGINE_PROJECT"])
+        st.success("Earth Engine inicializado via Service Account.")
+        return True
+    except Exception as e:
+        st.error(
+            "Falha ao inicializar o Earth Engine com Service Account.\n"
+            "Confira os *Secrets* (EE_SERVICE_ACCOUNT, EE_PRIVATE_KEY, EARTHENGINE_PROJECT) "
+            "e os papéis IAM (Service Usage Consumer e, para dev, Editor)."
+        )
+        st.exception(e)
+        return False
 
-    # pode vir como string → carregar para dict
-    key_dict = json.loads(private_key_json)
-
-    credentials = ee.ServiceAccountCredentials(service_account, key_dict)
-    ee.Initialize(credentials, project=project_id)
-    st.success("Earth Engine inicializado via Service Account.")
-
-try:
-    init_ee()
-except Exception as e:
-    st.error(
-        "Falha ao inicializar o Earth Engine com Service Account.\n"
-        "Confira os *Secrets* e os papéis IAM (Service Usage Consumer e, para dev, Editor)."
-    )
-    st.exception(e)
+if not init_ee():
     st.stop()
 
 # ----------------- APP (Mapa + consulta) -----------------
@@ -44,20 +41,20 @@ with st.sidebar:
         st.session_state._go_to = (lon, lat, zoom)
 
     st.divider()
-    st.subheader("Consulta de elevação")
+    st.subheader("Consulta de elevação (SRTM)")
     lat_q = st.number_input("Lat (consulta)", value=-22.75, format="%.6f", key="latq")
     lon_q = st.number_input("Lon (consulta)", value=-46.32, format="%.6f", key="lonq")
-    if st.button("Consultar SRTM"):
+    if st.button("Consultar"):
         pt = ee.Geometry.Point([lon_q, lat_q])
-        srtm = ee.Image("CGIAR/SRTM90_V4")
+        srtm_img = ee.Image("CGIAR/SRTM90_V4")
         try:
-            elev = (srtm.sample(pt, 90).first().get("elevation").getInfo())
+            elev = srtm_img.sample(pt, 90).first().get("elevation").getInfo()
             st.info(f"Elevação aproximada: **{elev:.1f} m**")
         except Exception as e:
             st.error("Não foi possível obter a elevação.")
             st.exception(e)
 
-# Cria mapa folium
+# Mapa folium via geemap
 m = geemap.Map(plugin_Draw=True, locate_control=True, draw_export=True)
 
 # Camada SRTM
@@ -73,4 +70,4 @@ if "_go_to" in st.session_state:
 st.write("Mapa interativo:")
 m.to_streamlit(height=650)
 
-st.caption("Se algo falhar, abra **⋮ → Manage app → Logs** para detalhes.")
+st.caption("Se algo falhar, verifique **⋮ → Manage app → Logs**.")
