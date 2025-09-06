@@ -109,7 +109,8 @@ section[data-testid="stSidebar"] ::-webkit-scrollbar {{
     height: 0px; 
 }}
 
-.main .block-container {{
+/* Ajuste do topo do container principal */
+[data-testid="stAppViewContainer"] .main .block-container {{
     padding-top: 0rem !important;
     margin-top: {MARGIN_TOP_REM}rem !important;
 }}
@@ -495,5 +496,6 @@ elif st.session_state.pagina == "mapas":
 else:
     st.subheader("Início")
     st.write("Selecione uma opção na barra lateral para começar.")
+
 
 
