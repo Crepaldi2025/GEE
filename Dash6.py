@@ -94,9 +94,20 @@ def map_step_ir(step: str):
 # =============================
 st.markdown(f"""
 <style>
-section[data-testid="stSidebar"] {{ min-width: 420px; max-width: 420px; }}
-section[data-testid="stSidebar"] > div:first-child {{ height: 100vh; overflow-y: hidden; }}
-section[data-testid="stSidebar"] ::-webkit-scrollbar {{ width: 0px; height: 0px; }}
+/* Sidebar: permite recolher totalmente */
+section[data-testid="stSidebar"] {{ 
+    max-width: 420px; 
+}}
+
+section[data-testid="stSidebar"] > div:first-child {{ 
+    height: 100vh; 
+    overflow-y: hidden; 
+}}
+
+section[data-testid="stSidebar"] ::-webkit-scrollbar {{ 
+    width: 0px; 
+    height: 0px; 
+}}
 
 .main .block-container {{
     padding-top: 0rem !important;
@@ -484,4 +495,5 @@ elif st.session_state.pagina == "mapas":
 else:
     st.subheader("Início")
     st.write("Selecione uma opção na barra lateral para começar.")
+
 
