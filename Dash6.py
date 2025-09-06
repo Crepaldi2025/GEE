@@ -328,7 +328,7 @@ def page_series():
         if st.session_state.estat_view:
             st.markdown(f"**Estatística selecionada:** {st.session_state.estat_view}")
 
-            csv_bytes = ( "# CSV modelo (sem dados)\n"
+            csv_bytes = ( "# CSV modelo\n"
                           "date,value\n"
                           "2020-01-01,\n2020-01-02,\n2020-01-03,\n" ).encode("utf-8")
             st.download_button(
@@ -341,7 +341,7 @@ def page_series():
 
             img = imagem_placeholder_serie(var, st.session_state.estat_view, reg)
             st.download_button(
-                "🖼️ Exportar PNG (gráfico placeholder)",
+                "🖼️ Exportar PNG",
                 data=png_bytes_from_image(img),
                 file_name=f"grafico_{var.lower()}_{st.session_state.estat_view.lower().replace(' ','_')}.png",
                 mime="image/png",
@@ -496,6 +496,7 @@ elif st.session_state.pagina == "mapas":
 else:
     st.subheader("Início")
     st.write("Selecione uma opção na barra lateral para começar.")
+
 
 
 
