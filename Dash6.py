@@ -332,7 +332,7 @@ def page_series():
                           "date,value\n"
                           "2020-01-01,\n2020-01-02,\n2020-01-03,\n" ).encode("utf-8")
             st.download_button(
-                "⬇️ Exportar CSV (modelo)",
+                "⬇️ Exportar CSV",
                 data=csv_bytes,
                 file_name=f"serie_{var.lower()}_{st.session_state.estat_view.lower().replace(' ','_')}.csv",
                 mime="text/csv",
@@ -496,6 +496,7 @@ elif st.session_state.pagina == "mapas":
 else:
     st.subheader("Início")
     st.write("Selecione uma opção na barra lateral para começar.")
+
 
 
 
