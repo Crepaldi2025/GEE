@@ -24,9 +24,17 @@ APP_TITLE = "CCC - Clima-Cast-Crepaldi"
 APP_SUB   = "Monitoramento de temperatura, precipitação e vento"
 
 # Caminhos de imagens (ajuste conforme seu ambiente)
-PATH_LOGO  = r"C:\Users\crepa\Desktop\git\CAT314\Logo.jpg"
-PATH_SERIE = r"C:\Users\crepa\Desktop\git\CAT314\Serie.png"
-PATH_MAPA  = r"C:\Users\crepa\Desktop\git\CAT314\Mapa.png"
+#PATH_LOGO  = r"C:\Users\crepa\Desktop\git\CAT314\Logo.jpg"
+#PATH_SERIE = r"C:\Users\crepa\Desktop\git\CAT314\Serie.png"
+#PATH_MAPA  = r"C:\Users\crepa\Desktop\git\CAT314\Mapa.png"
+
+from pathlib import Path
+BASE = Path(__file__).parent
+
+# use exatamente os nomes que estão no GitHub (maiúsc./minúsc. contam!)
+PATH_LOGO  = BASE / "assets" / "Logo.jpg"
+PATH_SERIE = BASE / "assets" / "Serie.png"
+PATH_MAPA  = BASE / "assets" / "Mapa.png"
 
 # Ajuste do topo (rem; negativos reduzem espaço)
 MARGIN_TOP_REM = -10
@@ -476,3 +484,4 @@ elif st.session_state.pagina == "mapas":
 else:
     st.subheader("Início")
     st.write("Selecione uma opção na barra lateral para começar.")
+
