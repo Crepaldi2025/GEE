@@ -1,175 +1,207 @@
-# app_ccc_mapas_v3b.py
-# - Navegação sem callback/rerun
-# - Módulo Mapas com preview e export (PNG/JPG/PDF/ZIP)
-# - Fallback seguro para map_export_name (sem KeyError)
-# - Lembrete: execute com "streamlit run app_ccc_mapas_v3b.py"
+# app_ccc_mapas_era5_mm.py
+# ----------------------------------------------------------
+# Mapas ERA5 (dados reais, sem placeholders)
+# - Fonte: Copernicus CDS • ERA5 Single Levels (Monthly means)
+# - Variáveis: t2m (°C, média mensal) e tp (mm, acumulado mensal)
+# - Área editável [N, W, E, S], export PNG/JPG/PDF/ZIP
+# - Rodar com: streamlit run app_ccc_mapas_era5_mm.py
+# ----------------------------------------------------------
 
-import streamlit as st
-from datetime import datetime, date
-from zoneinfo import ZoneInfo
-from PIL import Image, ImageDraw, ImageFont
+import os
 from io import BytesIO
-from pathlib import Path
 import zipfile
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import numpy as np
+import pandas as pd
+import xarray as xr
+import matplotlib.pyplot as plt
+import streamlit as st
+import cdsapi  # requer chave do CDS (arquivo ~/.cdsapirc local ou st.secrets no deploy)
 
-# ----------------- CONFIG -----------------
-st.set_page_config(page_title="CCC - Clima-Cast-Crepaldi", page_icon="⛈️",
-                   layout="wide", initial_sidebar_state="expanded")
+
+# ===================== CONFIG UI =====================
+st.set_page_config(page_title="CCC - ERA5 (Mapas)", page_icon="⛈️", layout="wide")
 APP_TITLE = "CCC - Clima-Cast-Crepaldi"
-APP_SUB   = "Monitoramento de temperatura, precipitação e vento"
-
-# ----------------- ESTADO (defaults) -----------------
-if "db_base" not in st.session_state: st.session_state.db_base = "ERA5"
-if "map_var" not in st.session_state: st.session_state.map_var = "Precipitação"
-if "map_agg" not in st.session_state: st.session_state.map_agg = "Acumulado Diário"
-if "map_daily_str" not in st.session_state: st.session_state.map_daily_str = date.today().strftime("%Y/%m/%d")
-if "map_year" not in st.session_state: st.session_state.map_year = 2025
-if "map_month_name" not in st.session_state: st.session_state.map_month_name = "Jan"
-if "map_custom_start" not in st.session_state: st.session_state.map_custom_start = date.today().replace(day=1).strftime("%Y/%m/%d")
-if "map_custom_end" not in st.session_state: st.session_state.map_custom_end = date.today().strftime("%Y/%m/%d")
-if "export_width" not in st.session_state: st.session_state.export_width = 1280
+APP_SUB   = "Mapas com dados reais do ERA5 (mensal)"
 
 MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-MES2NUM = {m:i+1 for i,m in enumerate(MESES)}
-ANOS = list(range(1940, 2026))
+MES2NUM = {m: i+1 for i, m in enumerate(MESES)}
+ANOS = list(range(1979, datetime.now().year + 1))   # ERA5 Single Levels começa em 1979
 
-# ----------------- STYLE -----------------
-st.markdown("""
-<style>
-section[data-testid="stSidebar"]{background:#fff!important;color:#111!important;min-width:320px;max-width:440px;border-right:1px solid #e5e5e5}
-.main .block-container{padding-top:.5rem!important}
-.custom-title{font-size:22px;font-weight:700;margin:0}
-.custom-sub{font-size:14px;color:#666;margin:2px 0 6px}
-.badges{display:flex;gap:.5rem;flex-wrap:wrap}
-.badge{display:inline-block;padding:.22rem .55rem;border-radius:999px;font-size:.85rem;border:1px solid #e0e0e0;background:#fafafa}
-.badge b{margin-right:.25rem;color:#333}
-</style>
-""", unsafe_allow_html=True)
+# Área padrão: América do Sul (CDS: [N, W, E, S])
+AREA_DEFAULT = [15, -90, -30, -60]
 
-# ----------------- Utils -----------------
-def _pick_font(sz=22):
-    try:
-        from PIL import ImageFont
-        return ImageFont.truetype("DejaVuSans.ttf", sz)
-    except:
-        return ImageFont.load_default()
 
-def img_bytes(img, fmt="PNG"):
-    bio = BytesIO()
-    if fmt=="PNG": img.save(bio, format="PNG")
-    elif fmt=="JPG": img.convert("RGB").save(bio, format="JPEG", quality=92)
-    elif fmt=="PDF": img.convert("RGB").save(bio, format="PDF")
-    return bio.getvalue()
-
-def parse_date_str(s: str):
-    from datetime import datetime as dt
-    try: return dt.strptime(s.strip(), "%Y/%m/%d").date()
-    except: return None
-
-def periodo_label_mapas():
-    agg = st.session_state.map_agg
-    if agg=="Acumulado Diário":
-        dt_ = parse_date_str(st.session_state.map_daily_str)
-        return dt_.strftime("%Y/%m/%d") if dt_ else "Data inválida"
-    if agg=="Acumulado Mensal":
-        return f"{st.session_state.map_year}-{MES2NUM.get(st.session_state.map_month_name,1):02d}"
-    if agg=="Acumulado Anual":
-        return f"{st.session_state.map_year}"
-    d1=parse_date_str(st.session_state.map_custom_start); d2=parse_date_str(st.session_state.map_custom_end)
-    s1=d1.strftime("%Y/%m/%d") if d1 else "inválida"; s2=d2.strftime("%Y/%m/%d") if d2 else "inválida"
-    return f"{s1} — {s2}"
-
-def render_placeholder_map(base, var, agg, periodo, width_px=1280, ratio=16/9):
-    w = int(width_px); h = int(width_px/ratio)
-    im = Image.new("RGB", (w, h), "white"); d = ImageDraw.Draw(im)
-    t1=_pick_font(36); t2=_pick_font(22); t3=_pick_font(18)
-    d.text((40, 40), f"Mapa — {var} • {agg}", fill=(0,0,0), font=t1)
-    d.text((40, 96), f"Base: {base}   |   Período: {periodo}", fill=(10,10,10), font=t2)
-    d.text((40,130), f"Gerado em {datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M}", fill=(90,90,90), font=t3)
-    d.rectangle([30,170,w-30,h-30], outline=(180,180,180), width=2)
-    d.text((50,185), "Preview (placeholder — camada real aqui)", fill=(120,120,120), font=t2)
-    return im
-
-def nome_auto_mapa():
-    base, var, agg = st.session_state.db_base, st.session_state.map_var, st.session_state.map_agg
-    per = periodo_label_mapas()
-    s = f"mapa_{base}_{var}_{agg}_{per}".lower().replace(" ","_").replace("/","")
+# ===================== UTILS =====================
+def _clean_filename(s: str) -> str:
+    import unicodedata, re
+    s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
+    s = s.lower()
+    s = re.sub(r"\s+","_", s)
+    s = s.replace("—","-").replace("–","-").replace("/","")
+    s = re.sub(r"[^a-z0-9_\-\.]+","", s)
     return s
 
-# ----------------- SIDEBAR -----------------
+def horas_no_mes(ano: int, mes: int) -> int:
+    per = pd.Period(f"{ano}-{mes:02d}")
+    return per.days_in_month * 24
+
+@st.cache_resource(show_spinner=False)
+def cds_client():
+    """Prioriza secrets em deploy; local cai no ~/.cdsapirc."""
+    url = st.secrets.get("cds", {}).get("url", None)
+    key = st.secrets.get("cds", {}).get("key", None)
+    if url and key:
+        return cdsapi.Client(url=url, key=key, verify=True)
+    return cdsapi.Client()
+
+@st.cache_data(show_spinner=True)
+def download_era5_monthly(variable: str, year: int, month: int, area: list, grid: float = 0.25) -> bytes:
+    """
+    Faz request ao CDS e retorna NetCDF em bytes para ERA5 monthly means (single levels).
+    variable: "2m_temperature" ou "total_precipitation"
+    area: [North, West, East, South]
+    grid: remapeamento (°); default 0.25
+    """
+    c = cds_client()
+    dataset = "reanalysis-era5-single-levels-monthly-means"
+    req = {
+        "product_type": "monthly_averaged_reanalysis",
+        "variable": variable,
+        "year": f"{year}",
+        "month": f"{month:02d}",
+        "time": "00:00",
+        "area": area,                 # [N, W, E, S]
+        "grid": [grid, grid],
+        "format": "netcdf",
+    }
+    result = c.retrieve(dataset, req)
+    return result.download_buffer().read()
+
+def abrir_xarray(nc_bytes: bytes) -> xr.Dataset:
+    return xr.open_dataset(BytesIO(nc_bytes))
+
+def preparar_da(ds: xr.Dataset, var_label: str, ano: int, mes: int) -> xr.DataArray:
+    """
+    Converte para unidades finais:
+      - Temperatura: t2m [K] → °C
+      - Precipitação: tp monthly_mean [m] → total mensal [mm] = mean * horas_mes * 1000
+    Renomeia dims latitude/longitude → lat/lon para plotar.
+    """
+    if var_label == "Temperatura":
+        da = ds["t2m"] - 273.15
+        da.attrs["units"] = "°C"
+        da.attrs["long_name"] = "Temperatura média 2 m"
+    else:
+        mean_m = ds["tp"]                             # média mensal em metros
+        total_m = mean_m * horas_no_mes(ano, mes)     # total do mês (m)
+        da = total_m * 1000.0                         # mm
+        da.attrs["units"] = "mm"
+        da.attrs["long_name"] = "Precipitação acumulada (mensal)"
+
+    # padroniza nomes
+    if "latitude" in da.dims:
+        da = da.rename({"latitude": "lat", "longitude": "lon"})
+    return da
+
+def plot_da(da: xr.DataArray, titulo: str):
+    """Plota com imshow usando extent lat/lon e colorbar de unidades."""
+    fig, ax = plt.subplots(figsize=(9, 5))
+    lat = da["lat"].values
+    lon = da["lon"].values
+    data = da.values
+
+    if lat[0] > lat[-1]:
+        lat = lat[::-1]
+        data = data[::-1, :]
+
+    im = ax.imshow(
+        data,
+        origin="lower",
+        extent=[lon.min(), lon.max(), lat.min(), lat.max()],
+        aspect="auto",
+    )
+    cb = plt.colorbar(im, ax=ax, shrink=0.85)
+    cb.set_label(da.attrs.get("units", ""))
+
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(titulo)
+    ax.grid(alpha=0.2, linestyle="--", linewidth=0.5)
+    fig.tight_layout()
+    return fig
+
+def fig_bytes(fig, fmt="png"):
+    bio = BytesIO()
+    fig.savefig(bio, format=fmt, dpi=160, bbox_inches="tight")
+    return bio.getvalue()
+
+
+# ===================== SIDEBAR =====================
 with st.sidebar:
-    st.markdown("#### Página Inicial")
-    st.caption(f"**Data/Hora:** {datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M}")
-    st.divider()
+    st.markdown("### ERA5 — Configurações")
+    st.caption(f"Agora: {datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M}")
 
-    nav_choice = st.radio("Escolha a seção:", ["🌍 Mapas Interativos", "📊 Séries Temporais"], index=0)
-    # — vamos focar Mapas; Séries ficaram ocultas neste exemplo
+    var_label = st.selectbox("Variável:", ["Temperatura", "Precipitação"])
+    year = st.select_slider("Ano:", options=ANOS, value=2021)
+    month_name = st.radio("Mês:", MESES, horizontal=True, index=6)  # Jul
+    month = MES2NUM[month_name]
 
-    if nav_choice.startswith("🌍"):
-        st.markdown("### Menu (Mapas)")
-        st.selectbox("Base de Dados:", ["ERA5"], key="db_base")
-        st.selectbox("Variável:", ["Precipitação","Temperatura","Vento"], key="map_var")
-        st.selectbox("Tipo de acumulado:", ["Acumulado Diário","Acumulado Mensal","Acumulado Anual","Acumulado Personalizado"], key="map_agg")
+    st.markdown("### Área [N, W, E, S] (CDS)")
+    with st.expander("Editar área", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            north = st.number_input("Norte (lat)", value=float(AREA_DEFAULT[0]), step=1.0)
+            west  = st.number_input("Oeste (lon)", value=float(AREA_DEFAULT[1]), step=1.0)
+        with c2:
+            east  = st.number_input("Leste (lon)", value=float(AREA_DEFAULT[2]), step=1.0)
+            south = st.number_input("Sul (lat)",   value=float(AREA_DEFAULT[3]), step=1.0)
+        area = [float(north), float(west), float(east), float(south)]
 
-        st.divider(); st.markdown("### Período")
-        if st.session_state.map_agg=="Acumulado Diário":
-            st.text_input("Data (YYYY/MM/DD):", key="map_daily_str", placeholder="YYYY/MM/DD")
-            if parse_date_str(st.session_state.map_daily_str) is None:
-                st.warning("Use YYYY/MM/DD (ex.: 2024/09/10).")
-        elif st.session_state.map_agg=="Acumulado Mensal":
-            st.select_slider("Ano:", options=ANOS, key="map_year")
-            st.radio("Mês:", MESES, key="map_month_name", horizontal=True)
-        elif st.session_state.map_agg=="Acumulado Anual":
-            st.select_slider("Ano:", options=ANOS, key="map_year")
-        else:
-            st.text_input("Data inicial (YYYY/MM/DD):", key="map_custom_start", placeholder="YYYY/MM/DD")
-            st.text_input("Data final (YYYY/MM/DD):",   key="map_custom_end",  placeholder="YYYY/MM/DD")
-            d1=parse_date_str(st.session_state.map_custom_start); d2=parse_date_str(st.session_state.map_custom_end)
-            if d1 is None or d2 is None: st.warning("Use YYYY/MM/DD nas duas datas.")
-            elif d1>d2: st.warning("Data inicial deve ser ≤ data final.")
+    st.markdown("### Exportar")
+    nome_auto = _clean_filename(f"era5_{var_label.lower()}_mensal_{year}-{month:02d}")
+    nome_atual = st.session_state.get("map_export_name", nome_auto)
+    st.text_input("Nome do arquivo:", value=nome_atual, key="map_export_name")
 
-        st.divider(); st.markdown("### Exportar")
-        # Fallback seguro: se a chave ainda não existir, usa o nome automático
-        default_name = nome_auto_mapa()
-        name_current = st.session_state.get("map_export_name", default_name)
-        st.text_input("Nome do arquivo:", value=name_current, key="map_export_name")
 
-        st.slider("Largura da imagem (px):", 960, 2560, value=st.session_state.export_width, step=160, key="export_width")
-
-# ----------------- HEADER -----------------
-st.markdown(f"<div class='custom-title'>{APP_TITLE}</div>", unsafe_allow_html=True)
-st.markdown(f"<div class='custom-sub'>{APP_SUB}</div>", unsafe_allow_html=True)
+# ===================== HEADER =====================
+st.markdown(f"## {APP_TITLE}")
+st.caption(APP_SUB)
 st.markdown("---")
 
-# ----------------- CORPO (Mapas) -----------------
-if nav_choice.startswith("🌍"):
-    periodo = periodo_label_mapas()
-    st.markdown("#### Resumo (Mapas)")
-    st.markdown(
-        f"""<div class="badges">
-            <span class="badge"><b>Base:</b> {st.session_state.db_base}</span>
-            <span class="badge"><b>Variável:</b> {st.session_state.map_var}</span>
-            <span class="badge"><b>Acumulado:</b> {st.session_state.map_agg}</span>
-            <span class="badge"><b>Período:</b> {periodo}</span>
-        </div>""", unsafe_allow_html=True)
 
-    # Preview placeholder
-    img_map = render_placeholder_map(
-        st.session_state.db_base,
-        st.session_state.map_var,
-        st.session_state.map_agg,
-        periodo,
-        width_px=st.session_state.export_width
-    )
-    st.image(img_map, caption="Preview do mapa (placeholder)", use_container_width=True)
+# ===================== CORPO: MAPA (dados reais) =====================
+st.markdown("#### Resumo (Mapas)")
+st.markdown(
+    f"""
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <span style="padding:.2rem .6rem;border:1px solid #ddd;border-radius:999px">Base: ERA5 (CDS)</span>
+      <span style="padding:.2rem .6rem;border:1px solid #ddd;border-radius:999px">Variável: {var_label}</span>
+      <span style="padding:.2rem .6rem;border:1px solid #ddd;border-radius:999px">Agregado: Mensal</span>
+      <span style="padding:.2rem .6rem;border:1px solid #ddd;border-radius:999px">Período: {year}-{month:02d}</span>
+      <span style="padding:.2rem .6rem;border:1px solid #ddd;border-radius:999px">Área: N{area[0]}, W{area[1]}, E{area[2]}, S{area[3]}</span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-    # Arquivos p/ export
-    png = img_bytes(img_map,"PNG")
-    jpg = img_bytes(img_map,"JPG")
-    pdf = img_bytes(img_map,"PDF")
+try:
+    with st.spinner("Baixando ERA5 mensal do CDS…"):
+        variable = "2m_temperature" if var_label == "Temperatura" else "total_precipitation"
+        nc_bytes = download_era5_monthly(variable, year, month, area)
+        ds = abrir_xarray(nc_bytes)
+        da = preparar_da(ds, var_label, year, month)
 
-    # Use SEMPRE um fallback local para o nome (evita KeyError)
-    map_name = st.session_state.get("map_export_name", nome_auto_mapa())
+    titulo = f"{da.attrs.get('long_name', var_label)} • {year}-{month:02d}"
+    fig = plot_da(da, titulo)
+    st.pyplot(fig, use_container_width=True)
+
+    # ---- Downloads
+    png = fig_bytes(fig, "png")
+    jpg = fig_bytes(fig, "jpg")
+    pdf = fig_bytes(fig, "pdf")
+    map_name = st.session_state.get("map_export_name", nome_auto)
 
     zipb = BytesIO()
     with zipfile.ZipFile(zipb, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -177,23 +209,21 @@ if nav_choice.startswith("🌍"):
         zf.writestr(f"{map_name}.jpg", jpg)
         zf.writestr(f"{map_name}.pdf", pdf)
 
-    fmt = st.selectbox("Formato:", ["PNG","JPG","PDF","ZIP (PNG+JPG+PDF)"], key="map_fmt")
-    if fmt=="PNG":
-        st.download_button("⬇️ Baixar PNG", data=png,
-                           file_name=f"{map_name}.png",
-                           mime="image/png", use_container_width=True)
-    elif fmt=="JPG":
-        st.download_button("⬇️ Baixar JPG", data=jpg,
-                           file_name=f"{map_name}.jpg",
-                           mime="image/jpeg", use_container_width=True)
-    elif fmt=="PDF":
-        st.download_button("⬇️ Baixar PDF", data=pdf,
-                           file_name=f"{map_name}.pdf",
-                           mime="application/pdf", use_container_width=True)
-    else:
-        st.download_button("⬇️ Baixar ZIP", data=zipb.getvalue(),
-                           file_name=f"{map_name}.zip",
-                           mime="application/zip", use_container_width=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.download_button("⬇️ PNG", data=png, file_name=f"{map_name}.png", mime="image/png", use_container_width=True)
+    with c2: st.download_button("⬇️ JPG", data=jpg, file_name=f"{map_name}.jpg", mime="image/jpeg", use_container_width=True)
+    with c3: st.download_button("⬇️ PDF", data=pdf, file_name=f"{map_name}.pdf", mime="application/pdf", use_container_width=True)
+    with c4: st.download_button("⬇️ ZIP", data=zipb.getvalue(), file_name=f"{map_name}.zip", mime="application/zip", use_container_width=True)
 
-else:
-    st.info("A aba de Séries foi omitida nesta versão de teste. Troque para **Mapas Interativos** na barra lateral.")
+except Exception as e:
+    st.error(f"Falha ao recuperar/plotar ERA5: {e}")
+    st.stop()
+
+
+# ===================== RODAPÉ (links úteis) =====================
+with st.expander("Referências (ERA5, CDS)", expanded=False):
+    st.markdown("""
+- ERA5 Single Levels (Monthly means) — CDS: https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels-monthly-means
+- ERA5: documentação de variáveis e unidades (ECMWF/CKB): https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation
+- Como usar a API do CDS: https://cds.climate.copernicus.eu/how-to-api
+""")
