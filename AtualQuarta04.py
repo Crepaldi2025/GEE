@@ -4,21 +4,22 @@
 # - Fonte: Copernicus CDS • ERA5 Single Levels (Monthly means)
 # - Variáveis: t2m (°C, média mensal) e tp (mm, acumulado mensal)
 # - Área editável [N, W, E, S], export PNG/JPG/PDF/ZIP
-# - Rodar com: streamlit run app_ccc_mapas_era5_mm.py
+# - Rodar: streamlit run app_ccc_mapas_era5_mm.py
 # ----------------------------------------------------------
 
 import os
 from io import BytesIO
 import zipfile
+import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 import streamlit as st
-import cdsapi  # requer chave do CDS (arquivo ~/.cdsapirc local ou st.secrets no deploy)
-
+import cdsapi  # usa ~/.cdsapirc local ou st.secrets no deploy
 
 # ===================== CONFIG UI =====================
 st.set_page_config(page_title="CCC - ERA5 (Mapas)", page_icon="⛈️", layout="wide")
@@ -32,14 +33,12 @@ ANOS = list(range(1979, datetime.now().year + 1))   # ERA5 Single Levels começa
 # Área padrão: América do Sul (CDS: [N, W, E, S])
 AREA_DEFAULT = [15, -90, -30, -60]
 
-
 # ===================== UTILS =====================
 def _clean_filename(s: str) -> str:
     import unicodedata, re
     s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
     s = s.lower()
-    s = re.sub(r"\s+","_", s)
-    s = s.replace("—","-").replace("–","-").replace("/","")
+    s = re.sub(r"\s+","_", s).replace("—","-").replace("–","-").replace("/","")
     s = re.sub(r"[^a-z0-9_\-\.]+","", s)
     return s
 
@@ -49,17 +48,36 @@ def horas_no_mes(ano: int, mes: int) -> int:
 
 @st.cache_resource(show_spinner=False)
 def cds_client():
-    """Prioriza secrets em deploy; local cai no ~/.cdsapirc."""
+    """Prioriza secrets (deploy); local cai no ~/.cdsapirc."""
     url = st.secrets.get("cds", {}).get("url", None)
     key = st.secrets.get("cds", {}).get("key", None)
     if url and key:
         return cdsapi.Client(url=url, key=key, verify=True)
     return cdsapi.Client()
 
+def _result_to_bytes(result) -> bytes:
+    """Converte o objeto retornado pelo cdsapi em bytes (.nc).
+    Tenta download_buffer(); se não existir, usa download() p/ arquivo temporário.
+    """
+    # caminho 1: APIs novas
+    if hasattr(result, "download_buffer"):
+        return result.download_buffer().read()
+    # caminho 2: fallback universal
+    tmp = tempfile.NamedTemporaryFile(suffix=".nc", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        result.download(tmp_path)
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        try: os.remove(tmp_path)
+        except: pass
+
 @st.cache_data(show_spinner=True)
 def download_era5_monthly(variable: str, year: int, month: int, area: list, grid: float = 0.25) -> bytes:
     """
-    Faz request ao CDS e retorna NetCDF em bytes para ERA5 monthly means (single levels).
+    Request ao CDS → NetCDF em bytes (ERA5 monthly means, single levels).
     variable: "2m_temperature" ou "total_precipitation"
     area: [North, West, East, South]
     grid: remapeamento (°); default 0.25
@@ -77,54 +95,43 @@ def download_era5_monthly(variable: str, year: int, month: int, area: list, grid
         "format": "netcdf",
     }
     result = c.retrieve(dataset, req)
-    return result.download_buffer().read()
+    return _result_to_bytes(result)
 
 def abrir_xarray(nc_bytes: bytes) -> xr.Dataset:
     return xr.open_dataset(BytesIO(nc_bytes))
 
 def preparar_da(ds: xr.Dataset, var_label: str, ano: int, mes: int) -> xr.DataArray:
-    """
-    Converte para unidades finais:
-      - Temperatura: t2m [K] → °C
-      - Precipitação: tp monthly_mean [m] → total mensal [mm] = mean * horas_mes * 1000
-    Renomeia dims latitude/longitude → lat/lon para plotar.
-    """
+    """Converte para unidades finais e renomeia dims latitude/longitude → lat/lon."""
     if var_label == "Temperatura":
         da = ds["t2m"] - 273.15
         da.attrs["units"] = "°C"
         da.attrs["long_name"] = "Temperatura média 2 m"
     else:
-        mean_m = ds["tp"]                             # média mensal em metros
-        total_m = mean_m * horas_no_mes(ano, mes)     # total do mês (m)
-        da = total_m * 1000.0                         # mm
+        # tp (monthly means) → total mensal = mean(m) * horas_do_mês; depois m→mm
+        mean_m = ds["tp"]
+        total_m = mean_m * horas_no_mes(ano, mes)
+        da = total_m * 1000.0
         da.attrs["units"] = "mm"
         da.attrs["long_name"] = "Precipitação acumulada (mensal)"
-
-    # padroniza nomes
     if "latitude" in da.dims:
         da = da.rename({"latitude": "lat", "longitude": "lon"})
     return da
 
 def plot_da(da: xr.DataArray, titulo: str):
-    """Plota com imshow usando extent lat/lon e colorbar de unidades."""
     fig, ax = plt.subplots(figsize=(9, 5))
     lat = da["lat"].values
     lon = da["lon"].values
     data = da.values
-
     if lat[0] > lat[-1]:
         lat = lat[::-1]
         data = data[::-1, :]
-
     im = ax.imshow(
-        data,
-        origin="lower",
+        data, origin="lower",
         extent=[lon.min(), lon.max(), lat.min(), lat.max()],
         aspect="auto",
     )
     cb = plt.colorbar(im, ax=ax, shrink=0.85)
     cb.set_label(da.attrs.get("units", ""))
-
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.set_title(titulo)
@@ -136,7 +143,6 @@ def fig_bytes(fig, fmt="png"):
     bio = BytesIO()
     fig.savefig(bio, format=fmt, dpi=160, bbox_inches="tight")
     return bio.getvalue()
-
 
 # ===================== SIDEBAR =====================
 with st.sidebar:
@@ -164,12 +170,10 @@ with st.sidebar:
     nome_atual = st.session_state.get("map_export_name", nome_auto)
     st.text_input("Nome do arquivo:", value=nome_atual, key="map_export_name")
 
-
 # ===================== HEADER =====================
 st.markdown(f"## {APP_TITLE}")
 st.caption(APP_SUB)
 st.markdown("---")
-
 
 # ===================== CORPO: MAPA (dados reais) =====================
 st.markdown("#### Resumo (Mapas)")
@@ -218,7 +222,6 @@ try:
 except Exception as e:
     st.error(f"Falha ao recuperar/plotar ERA5: {e}")
     st.stop()
-
 
 # ===================== RODAPÉ (links úteis) =====================
 with st.expander("Referências (ERA5, CDS)", expanded=False):
