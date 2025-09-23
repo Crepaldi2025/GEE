@@ -1,4 +1,4 @@
-earthengine-api>=1.1.4
+earthengine-api>=0.1.405
 geemap>=0.32.0
 pillow>=10.0
 pandas>=2.2
