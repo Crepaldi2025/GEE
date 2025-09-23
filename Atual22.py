@@ -953,3 +953,4 @@ elif st.session_state.page == "mapas":
     tela_mapas()
 elif st.session_state.page == "series":
     tela_series_temporais()
+
