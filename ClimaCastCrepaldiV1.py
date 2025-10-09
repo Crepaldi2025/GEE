@@ -40,12 +40,22 @@ import geopandas as gpd
 import textwrap
 
 # ===================== INICIALIZAÇÕES =====================
+import ee
+import streamlit as st
+import json
+
 try:
-    ee.Initialize(project="gee-crepaldi-2025", opt_url="https://earthengine.googleapis.com")
-    print("✅ Earth Engine inicializado com sucesso.")
+    service_account = st.secrets["earthengine"]["client_email"]
+    credentials = ee.ServiceAccountCredentials(
+        service_account,
+        key_data=json.dumps(dict(st.secrets["earthengine"]))
+    )
+    ee.Initialize(credentials)
+    print("✅ Earth Engine inicializado com sucesso (Service Account).")
 except Exception as e:
-    st.error(f"Erro ao inicializar o Earth Engine: {e}. Verifique a autenticação.")
+    st.error(f"Erro ao inicializar o Earth Engine: {e}")
     st.stop()
+
 
 st.set_page_config(page_title="CCC - Clima-Cast-Crepaldi", page_icon="⛈️", layout="wide")
 APP_TITLE = "CCC - Clima-Cast-Crepaldi"
@@ -1760,3 +1770,4 @@ def main():
 # ==================================================================================
 if __name__ == "__main__":
     main()
+
