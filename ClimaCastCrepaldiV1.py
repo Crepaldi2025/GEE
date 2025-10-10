@@ -42,21 +42,32 @@ import textwrap
 # ===================== INICIALIZAÇÕES =====================
 import json
 
-# 1. Defina o caminho para o arquivo JSON de credenciais
-SERVICE_ACCOUNT_FILE = r"C:\Users\crepa\Desktop\git\GEE\gee-crepaldi-2025-c050c2340f8e.json"
+import streamlit as st
+import ee
 
+# 1. Carrega as credenciais da conta de serviço dos Secrets do Streamlit
 try:
-    # 2. Leia e inicialize as credenciais
+    EE_SECRETS = st.secrets["earthengine_service_account"]
+    
+    # 2. Inicializa o Earth Engine usando as credenciais carregadas
     ee.Initialize(
         credentials=ee.ServiceAccountCredentials(
-            service_account_file=SERVICE_ACCOUNT_FILE,
-            key_acct=None,  # 'key_acct' não é necessário quando key_file é fornecido
-            project=None    # 'project' será lido do arquivo JSON
-        )
+            EE_SECRETS["client_email"],
+            EE_SECRETS["private_key"]
+        ),
+        project=EE_SECRETS["project_id"] # O 'project_id' também é necessário
     )
-    print("Earth Engine inicializado com sucesso!")
+    st.success("Google Earth Engine inicializado com sucesso!")
+
+except KeyError:
+    # Este erro acontece se o secret "earthengine_service_account" não for encontrado
+    st.error("Erro: O Secret 'earthengine_service_account' não foi configurado no Streamlit Cloud.")
+    st.info("Por favor, configure suas credenciais do GEE em .streamlit/secrets.toml.")
+    st.stop() # Para o aplicativo até que o segredo seja configurado
+    
 except Exception as e:
-    print(f"Erro ao inicializar o Earth Engine: {e}")
+    st.error(f"Erro ao inicializar o Earth Engine com as credenciais fornecidas: {e}")
+    st.stop()
 
 
 st.set_page_config(page_title="CCC - Clima-Cast-Crepaldi", page_icon="⛈️", layout="wide")
@@ -1772,6 +1783,7 @@ def main():
 # ==================================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
