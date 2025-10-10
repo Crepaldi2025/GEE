@@ -40,14 +40,10 @@ import geopandas as gpd
 import textwrap
 
 # ===================== INICIALIZAÇÕES =====================
-import ee
-import streamlit as st
 import json
 
-import ee
-
 # 1. Defina o caminho para o arquivo JSON de credenciais
-SERVICE_ACCOUNT_FILE = 'C:\Users\crepa\Desktop\git\GEE\gee-crepaldi-2025-c050c2340f8e.json'
+SERVICE_ACCOUNT_FILE = r"C:\Users\crepa\Desktop\git\GEE\gee-crepaldi-2025-c050c2340f8e.json"
 
 try:
     # 2. Leia e inicialize as credenciais
@@ -1776,5 +1772,6 @@ def main():
 # ==================================================================================
 if __name__ == "__main__":
     main()
+
 
 
