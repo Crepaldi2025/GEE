@@ -44,17 +44,23 @@ import ee
 import streamlit as st
 import json
 
+import ee
+
+# 1. Defina o caminho para o arquivo JSON de credenciais
+SERVICE_ACCOUNT_FILE = 'C:\Users\crepa\Desktop\git\GEE\gee-crepaldi-2025-c050c2340f8e.json'
+
 try:
-    service_account = st.secrets["earthengine"]["client_email"]
-    credentials = ee.ServiceAccountCredentials(
-        service_account,
-        key_data=json.dumps(dict(st.secrets["earthengine"]))
+    # 2. Leia e inicialize as credenciais
+    ee.Initialize(
+        credentials=ee.ServiceAccountCredentials(
+            service_account_file=SERVICE_ACCOUNT_FILE,
+            key_acct=None,  # 'key_acct' não é necessário quando key_file é fornecido
+            project=None    # 'project' será lido do arquivo JSON
+        )
     )
-    ee.Initialize(credentials)
-    print("✅ Earth Engine inicializado com sucesso (Service Account).")
+    print("Earth Engine inicializado com sucesso!")
 except Exception as e:
-    st.error(f"Erro ao inicializar o Earth Engine: {e}")
-    st.stop()
+    print(f"Erro ao inicializar o Earth Engine: {e}")
 
 
 st.set_page_config(page_title="CCC - Clima-Cast-Crepaldi", page_icon="⛈️", layout="wide")
@@ -1770,4 +1776,5 @@ def main():
 # ==================================================================================
 if __name__ == "__main__":
     main()
+
 
