@@ -40,35 +40,63 @@ import geopandas as gpd
 import textwrap
 
 # ===================== INICIALIZAÇÕES =====================
-import json
 
 import streamlit as st
 import ee
+import json
+import tempfile
+import os
+from google.oauth2.service_account import Credentials
 
-# 1. Carrega as credenciais da conta de serviço dos Secrets do Streamlit
 try:
+    # 1. Carrega todos os secrets
     EE_SECRETS = st.secrets["earthengine_service_account"]
     
-    # 2. Inicializa o Earth Engine usando as credenciais carregadas
+    # Monta o dicionário de credenciais a partir dos secrets do Streamlit
+    credentials_dict = {
+        "type": EE_SECRETS.get("type"),
+        "project_id": EE_SECRETS.get("project_id"),
+        "private_key_id": EE_SECRETS.get("private_key_id"),
+        "private_key": EE_SECRETS.get("private_key"),
+        "client_email": EE_SECRETS.get("client_email"),
+        "client_id": EE_SECRETS.get("client_id", "N/A"),
+        "auth_uri": EE_SECRETS.get("auth_uri", "N/A"),
+        "token_uri": EE_SECRETS.get("token_uri", "N/A"),
+        "auth_provider_x509_cert_url": EE_SECRETS.get("auth_provider_x509_cert_url", "N/A"),
+        "client_x509_cert_url": EE_SECRETS.get("client_x509_cert_url", "N/A"),
+        "universe_domain": EE_SECRETS.get("universe_domain", "googleapis.com")
+    }
+    
+    # --- Cria o arquivo JSON temporário ---
+    # Cria um arquivo temporário no sistema de arquivos do servidor
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp_file:
+        json.dump(credentials_dict, tmp_file)
+        temp_file_path = tmp_file.name
+
+    # 2. Inicializa o EE apontando para o arquivo temporário
+    # Este é o método mais robusto, pois o EE sabe como ler um arquivo JSON
     ee.Initialize(
         credentials=ee.ServiceAccountCredentials(
-            EE_SECRETS["client_email"],
-            EE_SECRETS["private_key"]
-        ),
-        project=EE_SECRETS["project_id"] # O 'project_id' também é necessário
+            service_account_file=temp_file_path,
+            project=credentials_dict["project_id"]
+        )
     )
-    st.success("Google Earth Engine inicializado com sucesso!")
+    st.success("Google Earth Engine inicializado com sucesso! 🚀")
 
-except KeyError:
-    # Este erro acontece se o secret "earthengine_service_account" não for encontrado
-    st.error("Erro: O Secret 'earthengine_service_account' não foi configurado no Streamlit Cloud.")
-    st.info("Por favor, configure suas credenciais do GEE em .streamlit/secrets.toml.")
-    st.stop() # Para o aplicativo até que o segredo seja configurado
+finally:
+    # 3. Garante que o arquivo temporário seja removido, protegendo as credenciais
+    if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+        os.remove(temp_file_path)
+
+except KeyError as e:
+    st.error(f"Erro de configuração: O campo {e} está faltando no seu Secret do Streamlit.")
+    st.info("Verifique se copiou todos os campos do seu arquivo JSON para o `secrets.toml`.")
+    st.stop()
     
 except Exception as e:
-    st.error(f"Erro ao inicializar o Earth Engine com as credenciais fornecidas: {e}")
+    # Este erro agora indicará um problema real de autenticação/permissão, e não de sintaxe
+    st.error(f"Erro ao inicializar o Earth Engine: {e}")
     st.stop()
-
 
 st.set_page_config(page_title="CCC - Clima-Cast-Crepaldi", page_icon="⛈️", layout="wide")
 APP_TITLE = "CCC - Clima-Cast-Crepaldi"
@@ -1783,6 +1811,7 @@ def main():
 # ==================================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
